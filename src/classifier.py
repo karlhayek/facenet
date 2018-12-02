@@ -33,8 +33,25 @@ import facenet
 import os
 import sys
 import math
-import pickle
+import pickle, pdb
 from sklearn.svm import SVC
+
+use_distance = True
+
+def getPeopleEmbs(train_embs, train_labels):
+    i, label_embs = 0, []
+    while i < len(train_labels):
+        label_emb = np.copy(train_embs[i])
+        init_pos = i
+        while i+1 < len(train_labels) and train_labels[i] == train_labels[i+1]:
+            label_emb += train_embs[i+1]
+            i += 1
+        label_emb /= (i - init_pos + 1)
+        # normalize the vector
+        label_emb /= np.linalg.norm(label_emb)
+        label_embs.append(label_emb)
+        i += 1
+    return np.array(label_embs)
 
 def main(args):
   
@@ -47,10 +64,7 @@ def main(args):
             if args.use_split_dataset:
                 dataset_tmp = facenet.get_dataset(args.data_dir)
                 train_set, test_set = split_dataset(dataset_tmp, args.min_nrof_images_per_class, args.nrof_train_images_per_class)
-                if (args.mode=='TRAIN'):
-                    dataset = train_set
-                elif (args.mode=='CLASSIFY'):
-                    dataset = test_set
+                dataset = train_set if args.mode=='TRAIN' else test_set
             else:
                 dataset = facenet.get_dataset(args.data_dir)
 
@@ -79,6 +93,7 @@ def main(args):
             nrof_images = len(paths)
             nrof_batches_per_epoch = int(math.ceil(1.0*nrof_images / args.batch_size))
             emb_array = np.zeros((nrof_images, embedding_size))
+
             for i in range(nrof_batches_per_epoch):
                 start_index = i*args.batch_size
                 end_index = min((i+1)*args.batch_size, nrof_images)
@@ -92,31 +107,42 @@ def main(args):
             if (args.mode=='TRAIN'):
                 # Train classifier
                 print('Training classifier')
-                model = SVC(kernel='linear', probability=True)
-                model.fit(emb_array, labels)
+
+                if use_distance:
+                    people_embs = getPeopleEmbs(emb_array, labels)
+                    to_dump = people_embs
+                else:
+                    model = SVC(kernel='linear', probability=True)
+                    model.fit(emb_array, labels)
+                    to_dump = model
             
                 # Create a list of class names
                 class_names = [ cls.name.replace('_', ' ') for cls in dataset]
-
                 # Saving classifier model
                 with open(classifier_filename_exp, 'wb') as outfile:
-                    pickle.dump((model, class_names), outfile)
+                    pickle.dump((to_dump, class_names), outfile)
                 print('Saved classifier model to file "%s"' % classifier_filename_exp)
                 
             elif (args.mode=='CLASSIFY'):
                 # Classify images
                 print('Testing classifier')
                 with open(classifier_filename_exp, 'rb') as infile:
-                    (model, class_names) = pickle.load(infile)
+                    if use_distance:
+                        people_embs, class_names = pickle.load(infile)
+                    else:
+                        model, class_names = pickle.load(infile)
 
                 print('Loaded classifier model from file "%s"' % classifier_filename_exp)
 
-                predictions = model.predict_proba(emb_array)
-                best_class_indices = np.argmax(predictions, axis=1)
-                best_class_probabilities = predictions[np.arange(len(best_class_indices)), best_class_indices]
+                if use_distance:
+                    best_class_indices = np.argmax(emb_array.dot(people_embs.T), axis=1)
+                else:
+                    predictions = model.predict_proba(emb_array)
+                    best_class_indices = np.argmax(predictions, axis=1)
+                    best_class_probabilities = predictions[np.arange(len(best_class_indices)), best_class_indices]
                 
                 for i in range(len(best_class_indices)):
-                    print('%4d  %s: %.3f' % (i, class_names[best_class_indices[i]], best_class_probabilities[i]))
+                    print('%4d  %s:' % (i, class_names[best_class_indices[i]]))#, best_class_probabilities[i]))
                     
                 accuracy = np.mean(np.equal(best_class_indices, labels))
                 print('Accuracy: %.3f' % accuracy)
@@ -138,14 +164,14 @@ def split_dataset(dataset, min_nrof_images_per_class, nrof_train_images_per_clas
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('mode', type=str, choices=['TRAIN', 'CLASSIFY'],
+    parser.add_argument('--mode', type=str, choices=['TRAIN', 'CLASSIFY'],
         help='Indicates if a new classifier should be trained or a classification ' + 
         'model should be used for classification', default='CLASSIFY')
-    parser.add_argument('data_dir', type=str,
+    parser.add_argument('--data_dir', type=str,
         help='Path to the data directory containing aligned LFW face patches.')
-    parser.add_argument('model', type=str, 
+    parser.add_argument('--model', type=str, 
         help='Could be either a directory containing the meta_file and ckpt_file or a model protobuf (.pb) file')
-    parser.add_argument('classifier_filename', 
+    parser.add_argument('--classifier_filename', 
         help='Classifier model file name as a pickle (.pkl) file. ' + 
         'For training this is the output and for classification this is an input.')
     parser.add_argument('--use_split_dataset', 
@@ -160,9 +186,9 @@ def parse_arguments(argv):
     parser.add_argument('--seed', type=int,
         help='Random seed.', default=666)
     parser.add_argument('--min_nrof_images_per_class', type=int,
-        help='Only include classes with at least this number of images in the dataset', default=20)
+        help='Only include classes with at least this number of images in the dataset', default=1)
     parser.add_argument('--nrof_train_images_per_class', type=int,
-        help='Use this number of images from each class for training and the rest for testing', default=10)
+        help='Use this number of images from each class for training and the rest for testing', default=1)
     
     return parser.parse_args(argv)
 

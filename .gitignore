@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
+.vscode/
+.project
+.pydevproject
+.pylintrc
+.travis.yml
+
 # C extensions
 *.so
 

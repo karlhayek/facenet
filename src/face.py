@@ -38,12 +38,12 @@ import tensorflow as tf
 from scipy import misc
 
 import align.detect_face
-import facenet
+import facenet, pdb
 
 
 gpu_memory_fraction = 0.3
-facenet_model_checkpoint = os.path.dirname(__file__) + "/../model_checkpoints/20170512-110547"
-classifier_model = os.path.dirname(__file__) + "/../model_checkpoints/my_classifier_1.pkl"
+facenet_model_checkpoint = os.path.dirname(__file__) + "/../models/20180408-102900/20180408-102900.pb"
+classifier_model = os.path.dirname(__file__) + "/classifier_faces.pkl"
 debug = False
 
 
@@ -55,6 +55,10 @@ class Face:
         self.container_image = None
         self.embedding = None
 
+        self.dic_name_count = dict()
+        self.cont_frames = 0
+        self.non_cont_frames = 0
+
 
 class Recognition:
     def __init__(self):
@@ -64,7 +68,7 @@ class Recognition:
 
     def add_identity(self, image, person_name):
         faces = self.detect.find_faces(image)
-
+        
         if len(faces) == 1:
             face = faces[0]
             face.name = person_name
@@ -73,7 +77,7 @@ class Recognition:
 
     def identify(self, image):
         faces = self.detect.find_faces(image)
-
+    
         for i, face in enumerate(faces):
             if debug:
                 cv2.imshow("Face: " + str(i), face.image)
@@ -86,14 +90,26 @@ class Recognition:
 class Identifier:
     def __init__(self):
         with open(classifier_model, 'rb') as infile:
-            self.model, self.class_names = pickle.load(infile)
+            # self.model, self.class_names = pickle.load(infile)
+            self.people_embs, self.class_names = pickle.load(infile)
+            
+            self.class_names = np.array(self.class_names)
 
     def identify(self, face):
         if face.embedding is not None:
-            predictions = self.model.predict_proba([face.embedding])
-            best_class_indices = np.argmax(predictions, axis=1)
-            return self.class_names[best_class_indices[0]]
+            # predictions = self.model.predict_proba([face.embedding])
+            # top_index = np.argmax(predictions, axis=1)[0]
+            # threshold = 0.1
 
+            similarities = face.embedding.dot(self.people_embs.T)
+            top_index = similarities.argmax()
+            threshold = 0.48
+
+            if similarities[top_index] > threshold:
+                return self.class_names[top_index]
+            else:
+                return "Unknown"
+            
 
 class Encoder:
     def __init__(self):
